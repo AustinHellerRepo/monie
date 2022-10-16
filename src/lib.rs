@@ -48,16 +48,19 @@ use std::error::Error;
 use std::sync::Arc;
 
 use bytes::Bytes;
-use futures::future::{self, Future, FutureResult};
-use futures::stream::Stream;
+use futures::future::{self, Future};
+//use futures::stream::Stream;
 use http::method::Method;
 use http::uri::{Authority, Uri};
-use hyper::client::pool::Pooled;
-use hyper::client::{HttpConnector, PoolClient};
-use hyper::server::conn::Http;
-use hyper::service::{service_fn, NewService, Service};
+//use hyper::client::pool::Pooled;
+use hyper::client::HttpConnector;
+//use hyper::client::PoolClient;
+//use hyper::server::conn::Http;
+use hyper::service::{service_fn, Service};
+//use hyper::service::NewService;
 use hyper::upgrade::Upgraded;
-use hyper::{Body, Chunk, Client, Request, Response};
+use hyper::{Body, Client, Request, Response};
+//use hyper::Chunk;
 use hyper_rustls::HttpsConnector;
 use tokio_rustls::{Accept, TlsAcceptor, TlsStream};
 
@@ -127,7 +130,6 @@ impl<T: Mitm + Sync + Send + 'static> NewService for MitmProxyService<T> {
     type Error = std::io::Error;
     type Service = MitmProxyService<T>;
     type InitError = std::io::Error;
-    type Future = FutureResult<Self::Service, Self::InitError>;
 
     fn new_service(&self) -> Self::Future {
         future::ok(MitmProxyService::new())
@@ -135,8 +137,6 @@ impl<T: Mitm + Sync + Send + 'static> NewService for MitmProxyService<T> {
 }
 
 impl<T: Mitm + Sync + Send + 'static> Service for MitmProxyService<T> {
-    type ReqBody = Body;
-    type ResBody = Body;
     type Error = std::io::Error;
     type Future =
         Box<dyn Future<Item = Response<Body>, Error = std::io::Error> + Send>;
@@ -248,7 +248,7 @@ fn proxy_connect<T: Mitm + Sync + Send + 'static>(
             .and_then(|upgraded: Upgraded| -> Accept<Upgraded> {
                 TlsAcceptor::from(tls_cfg).accept(upgraded)
             })
-            .map(move |stream: TlsStream<Upgraded, rustls::ServerSession>| {
+            .map(move |stream: TlsStream<Upgraded, rustls::ServerConnection>| {
                 info!("proxy_connect() tls connection established with proxy \
                        client: {:?}", stream);
                 service_inner_requests::<T>(stream)
@@ -258,7 +258,7 @@ fn proxy_connect<T: Mitm + Sync + Send + 'static>(
             })
             .flatten();
 
-            hyper::rt::spawn(inner);
+            tokio::spawn(inner);
 
             Response::builder().status(200).body(Body::empty()).unwrap()
         })
@@ -273,7 +273,7 @@ fn proxy_connect<T: Mitm + Sync + Send + 'static>(
 /// Called by `proxy_connect()` once the TLS session has been established with
 /// the proxy client. Proxies requests received on the TLS connection.
 fn service_inner_requests<T: Mitm + Sync + Send + 'static>(
-    stream: TlsStream<Upgraded, rustls::ServerSession>,
+    stream: TlsStream<Upgraded, rustls::ServerConnection>,
 ) -> impl Future<Item = (), Error = ()> {
     let svc = service_fn(move |req: Request<Body>| {
         // "host" header is required for http 1.1
